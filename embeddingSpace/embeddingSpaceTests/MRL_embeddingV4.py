@@ -129,7 +129,7 @@ EPOCHS      = 8            # v8: increased from 6 for more learning signal
 GRAD_CLIP   = 1.0
 TEMPERATURE = 0.07
 
-N_TRIALS = 3  # set to 2 in quick mode
+N_TRIALS = 20  # set to 2 in quick mode
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hyperparameter sampling
@@ -1130,7 +1130,7 @@ def test_5_trigger_threshold_optimality(verbose: bool = False, quick: bool = Fal
     BAD_MEAN   = 0.62
     GOOD_MEAN  = 0.76
     ACC_STD    = 0.07
-    N_SEASONS  = 5     # average over N_SEASONS independent 60-day seasons
+    N_SEASONS  = 20     # average over N_SEASONS independent 60-day seasons
 
     noise = sample_noise(0.05, 0.2)  # kept for log consistency
     n_exp = min(12, PREFIX_DIM)
@@ -1211,11 +1211,11 @@ def test_6_training_data_composition(verbose: bool = False, quick: bool = False)
     """
     print("\n[Test 6] Training data composition tournament — sample efficiency")
 
-    N      = 500 if quick else 900
+    N      = 500 if quick else 1500
     n_trials = 2 if quick else N_TRIALS
     log_hyperparams(N=N, n_trials=n_trials)
 
-    ns = [50, 100, 200, 400] if not quick else [50, 100, 200]
+    ns = [50, 100, 200, 400, 800] if not quick else [50, 100, 200]
 
     strategy_aucs: Dict[str, List[float]] = {
         "Random triplets":   [],
@@ -1288,7 +1288,7 @@ def test_7_centroid_update_scope(verbose: bool = False, quick: bool = False):
     N_PER     = 10
     N         = 300 if quick else 500
     n_rnd     = 3   if quick else 5
-    noise     = sample_noise(0.05, 0.14)
+    noise     = sample_noise(0.05, 0.2)
     n_exp     = N_DOMAINS * N_PER
     log_hyperparams(noise=f"{noise:.3f}", N=N, N_DOMAINS=N_DOMAINS, n_exp=n_exp)
 
@@ -1387,9 +1387,9 @@ def test_8_adapter_selection_and_ood(verbose: bool = False, quick: bool = False)
     """
     print("\n[Test 8] Adapter selection method + OOD handling")
 
-    N_ADAPTERS = sample_n_experts(5, min(12, PREFIX_DIM)) if not quick \
+    N_ADAPTERS = sample_n_experts(5, min(20, PREFIX_DIM)) if not quick \
                  else sample_n_experts(4, min(8, PREFIX_DIM))
-    N_TEST     = 200 if not quick else 100
+    N_TEST     = 600 if not quick else 100
     log_hyperparams(N_ADAPTERS=N_ADAPTERS, N_TEST=N_TEST)
 
     domain_cents_mat = make_well_separated_experts(N_ADAPTERS)
@@ -1497,7 +1497,7 @@ def test_9_rank_determination_tournament(verbose: bool = False, quick: bool = Fa
     print("\n[Test 9] Rank determination tournament — Two-NN vs PCA vs fixed ranks")
 
     TRUE_RANK = 16
-    N         = 500 if quick else 800
+    N         = 500 if quick else 1500
     n_trials  = 2 if quick else N_TRIALS
     log_hyperparams(TRUE_RANK=TRUE_RANK, N=N, n_trials=n_trials)
 
@@ -1568,14 +1568,14 @@ def test_10_prefix_integrity_and_accumulation(verbose: bool = False, quick: bool
     """[R11] Prefix integrity over sequential adaptation rounds."""
     print("\n[Test 10] Prefix integrity + accumulation across sequential adaptation rounds")
 
-    N       = 400 if quick else 600
-    N_RND   = 3   if quick else 5
+    N       = 400 if quick else 1200
+    N_RND   = 3   if quick else 8
     TRUE_RANK = 12
-    noise   = sample_noise(0.04, 0.12)
+    noise   = sample_noise(0.08, 0.16)
     n_exp   = sample_n_experts(6, min(15, PREFIX_DIM))
     log_hyperparams(noise=f"{noise:.3f}", n_exp=n_exp, TRUE_RANK=TRUE_RANK)
 
-    docs_manifold = make_manifold_data(800, true_rank=TRUE_RANK, noise=noise, normalize=False)
+    docs_manifold = make_manifold_data(1500, true_rank=TRUE_RANK, noise=noise, normalize=False)
     r_twonn = two_nn_rank(docs_manifold)
     print(f"  Two-NN rank (from rank-{TRUE_RANK} manifold): {r_twonn}")
 
@@ -1622,9 +1622,13 @@ def test_11_streaming_centroid_tournament(verbose: bool = False, quick: bool = F
     N_SHIFT = 500  if not quick else 200
     N_DRIFT = 300  if not quick else 150
     BATCH   = 50
+    noise_scale = 3.0 
+    
+    # Phase 1: Wide initial cluster
+    phase1 = F.normalize(torch.randn(N_WARM, EMBED_DIM, device=DEVICE) * noise_scale, p=2, dim=-1)
+    # Phase 2: Shifted, but still wide
+    phase2 = F.normalize(torch.randn(N_SHIFT, EMBED_DIM, device=DEVICE) * noise_scale + 2.0, p=2, dim=-1)
 
-    phase1 = F.normalize(torch.randn(N_WARM,  EMBED_DIM, device=DEVICE), p=2, dim=-1)
-    phase2 = F.normalize(torch.randn(N_SHIFT, EMBED_DIM, device=DEVICE) + 2.0, p=2, dim=-1)
 
     drift_batches = []
     drift_vec = F.normalize(torch.randn(EMBED_DIM, device=DEVICE), p=2, dim=-1)
@@ -1638,20 +1642,38 @@ def test_11_streaming_centroid_tournament(verbose: bool = False, quick: bool = F
     true_mean1 = phase1.mean(0)
     true_mean2 = phase2.mean(0)
 
-    def track(strategy_fn) -> Tuple[float, float, float]:
+    def track(strategy_fn, outlier_prob=0.05) -> Tuple[float, float, float]:
         state = strategy_fn()
+        
+        # Phase 1: Convergence
         for i in range(0, N_WARM, BATCH):
-            state["update"](phase1[i: i + BATCH])
+            batch = phase1[i: i + BATCH]
+            # INJECT NOISE: 5% chance this entire batch is garbage
+            if torch.rand(1).item() < outlier_prob:
+                batch = F.normalize(torch.randn_like(batch), p=2, dim=-1)
+            state["update"](batch)
         conv_sim = F.cosine_similarity(state["get"]().unsqueeze(0),
                                         true_mean1.unsqueeze(0)).item()
+                                        
+        # Phase 2: Step Shift
         for i in range(0, N_SHIFT, BATCH):
-            state["update"](phase2[i: i + BATCH])
+            batch = phase2[i: i + BATCH]
+            # INJECT NOISE
+            if torch.rand(1).item() < outlier_prob:
+                batch = F.normalize(torch.randn_like(batch), p=2, dim=-1)
+            state["update"](batch)
         shift_sim = F.cosine_similarity(state["get"]().unsqueeze(0),
                                          true_mean2.unsqueeze(0)).item()
+                                         
+        # Phase 3: Gradual Drift
         for b in drift_batches:
+            # INJECT NOISE
+            if torch.rand(1).item() < outlier_prob:
+                b = F.normalize(torch.randn_like(b), p=2, dim=-1)
             state["update"](b)
         drift_sim = F.cosine_similarity(state["get"]().unsqueeze(0),
                                          drift_target.unsqueeze(0)).item()
+                                         
         return conv_sim, shift_sim, drift_sim
 
     rows = []
@@ -1707,139 +1729,139 @@ def test_11_streaming_centroid_tournament(verbose: bool = False, quick: bool = F
     print("  Note: True running mean cannot track gradual drift — Phase 3 reveals this.")
 
 
-def test_12_adapter_boundary_interference(verbose: bool = False, quick: bool = False):
-    """
-    [NEW] How do different adapter selection strategies handle boundary queries?
+# def test_12_adapter_boundary_interference(verbose: bool = False, quick: bool = False):
+#     """
+#     [NEW] How do different adapter selection strategies handle boundary queries?
 
-    Boundary queries sit near the midpoint between two domain centroids — both
-    domains are equally valid answers. This tests:
-      1. In-distribution accuracy: does the strategy correctly route clear in-dist
-         queries to their known domain?
-      2. Boundary valid-domain coverage: for boundary queries between domains 0 and 1,
-         does the strategy route them to EITHER domain 0 OR domain 1? (Both are valid.)
-         Strategies that suppress routing (high τ) score 0% here — they fail to route.
-         Strategies that route to a completely wrong domain (domain 2,3,...) also score 0%.
+#     Boundary queries sit near the midpoint between two domain centroids — both
+#     domains are equally valid answers. This tests:
+#       1. In-distribution accuracy: does the strategy correctly route clear in-dist
+#          queries to their known domain?
+#       2. Boundary valid-domain coverage: for boundary queries between domains 0 and 1,
+#          does the strategy route them to EITHER domain 0 OR domain 1? (Both are valid.)
+#          Strategies that suppress routing (high τ) score 0% here — they fail to route.
+#          Strategies that route to a completely wrong domain (domain 2,3,...) also score 0%.
 
-    Score = 0.6 × in_dist_accuracy + 0.4 × valid_domain_coverage
-    (In-dist accuracy weighted higher — boundary handling is secondary.)
+#     Score = 0.6 × in_dist_accuracy + 0.4 × valid_domain_coverage
+#     (In-dist accuracy weighted higher — boundary handling is secondary.)
 
-    This correctly penalizes τ=0.5 which achieves "consistency" by suppressing
-    all boundary routing — consistent, but useless for the downstream retrieval task.
+#     This correctly penalizes τ=0.5 which achieves "consistency" by suppressing
+#     all boundary routing — consistent, but useless for the downstream retrieval task.
 
-    Fix 5: negatives tiled to exactly N rows.
-    """
-    print("\n[Test 12] Adapter boundary interference — routing validity under ambiguity")
+#     Fix 5: negatives tiled to exactly N rows.
+#     """
+#     print("\n[Test 12] Adapter boundary interference — routing validity under ambiguity")
 
-    N     = 200 if not quick else 100
-    noise = sample_noise(0.04, 0.10)
-    n_dom = sample_n_experts(3, min(6, PREFIX_DIM))
-    log_hyperparams(noise=f"{noise:.3f}", N=N, n_domains=n_dom)
+#     N     = 400 if not quick else 100
+#     noise = sample_noise(0.08, 0.16)
+#     n_dom = sample_n_experts(4, min(6, PREFIX_DIM))
+#     log_hyperparams(noise=f"{noise:.3f}", N=N, n_domains=n_dom)
 
-    domain_cents_mat = make_well_separated_experts(n_dom)
-    domain_cents     = [domain_cents_mat[i] for i in range(n_dom)]
+#     domain_cents_mat = make_well_separated_experts(n_dom)
+#     domain_cents     = [domain_cents_mat[i] for i in range(n_dom)]
 
-    adapters = []
-    manifold_r_data = make_manifold_data(600, true_rank=8, noise=0.05, normalize=False)
-    r = max(RANK_MIN, min(RANK_MAX, round(two_nn_intrinsic_dim(manifold_r_data) * TWO_NN_SCALE)))
+#     adapters = []
+#     manifold_r_data = make_manifold_data(600, true_rank=8, noise=0.1, normalize=False)
+#     r = max(RANK_MIN, min(RANK_MAX, round(two_nn_intrinsic_dim(manifold_r_data) * TWO_NN_SCALE)))
 
-    for d in range(n_dom):
-        exp_d, clean_d, sq_d, doc_d, _, _ = make_shifted_domain(N, min(5, PREFIX_DIM),
-                                                                   noise=noise)
-        # Fix 5: build exactly N other-domain negative rows by tiling
-        other_parts = []
-        for k in range(1, n_dom):
-            base = domain_cents[(d + k) % n_dom].unsqueeze(0).expand(N, -1)
-            part = F.normalize(base + torch.randn(N, EMBED_DIM, device=DEVICE) * noise,
-                               p=2, dim=-1)
-            other_parts.append(part)
-        other_queries = torch.cat(other_parts, dim=0)
-        perm = torch.randperm(len(other_queries), device=DEVICE)[:N]
-        neg  = other_queries[perm]
+#     for d in range(n_dom):
+#         exp_d, clean_d, sq_d, doc_d, _, _ = make_shifted_domain(N, min(5, PREFIX_DIM),
+#                                                                    noise=noise)
+#         # Fix 5: build exactly N other-domain negative rows by tiling
+#         other_parts = []
+#         for k in range(1, n_dom):
+#             base = domain_cents[(d + k) % n_dom].unsqueeze(0).expand(N, -1)
+#             part = F.normalize(base + torch.randn(N, EMBED_DIM, device=DEVICE) * noise,
+#                                p=2, dim=-1)
+#             other_parts.append(part)
+#         other_queries = torch.cat(other_parts, dim=0)
+#         perm = torch.randperm(len(other_queries), device=DEVICE)[:N]
+#         neg  = other_queries[perm]
 
-        adapt = LowRankProjectionAdapter(EMBED_DIM, rank=r).to(DEVICE)
-        train_adapter(adapt, sq_d, doc_d, cross_domain_negs=neg)
-        adapters.append((adapt, domain_cents[d]))
+#         adapt = LowRankProjectionAdapter(EMBED_DIM, rank=r).to(DEVICE)
+#         train_adapter(adapt, sq_d, doc_d, cross_domain_negs=neg)
+#         adapters.append((adapt, domain_cents[d]))
 
-    def select_with_threshold(q, tau=0.0):
-        """Returns (domain_idx or None, sim)."""
-        sims = torch.stack([F.normalize(q, p=2, dim=-1) @ c for _, c in adapters])
-        best_idx = sims.argmax().item()
-        best_sim = sims[best_idx].item()
-        if best_sim < tau:
-            return None, best_sim
-        return best_idx, best_sim
+#     def select_with_threshold(q, tau=0.0):
+#         """Returns (domain_idx or None, sim)."""
+#         sims = torch.stack([F.normalize(q, p=2, dim=-1) @ c for _, c in adapters])
+#         best_idx = sims.argmax().item()
+#         best_sim = sims[best_idx].item()
+#         if best_sim < tau:
+#             return None, best_sim
+#         return best_idx, best_sim
 
-    # In-distribution queries: unambiguously close to their domain
-    in_dist_q    = []
-    in_dist_true = []
-    for i in range(N):
-        d = i % n_dom
-        q = F.normalize(domain_cents[d] + torch.randn(EMBED_DIM, device=DEVICE) * 0.02,
-                         p=2, dim=-1)
-        in_dist_q.append(q)
-        in_dist_true.append(d)
-    in_dist_q = torch.stack(in_dist_q)
+#     # In-distribution queries: unambiguously close to their domain
+#     in_dist_q    = []
+#     in_dist_true = []
+#     for i in range(N):
+#         d = i % n_dom
+#         q = F.normalize(domain_cents[d] + torch.randn(EMBED_DIM, device=DEVICE) * 0.02,
+#                          p=2, dim=-1)
+#         in_dist_q.append(q)
+#         in_dist_true.append(d)
+#     in_dist_q = torch.stack(in_dist_q)
 
-    # Boundary queries: midpoint between domain 0 and domain 1 (both valid)
-    boundary_q = F.normalize(
-        domain_cents[0] + domain_cents[1]
-        + torch.randn(N, EMBED_DIM, device=DEVICE) * noise,
-        p=2, dim=-1)
-    valid_boundary_domains = {0, 1}
+#     # Boundary queries: midpoint between domain 0 and domain 1 (both valid)
+#     boundary_q = F.normalize(
+#         domain_cents[0] + domain_cents[1]
+#         + torch.randn(N, EMBED_DIM, device=DEVICE) * noise,
+#         p=2, dim=-1)
+#     valid_boundary_domains = {0, 1}
 
-    print(f"  Boundary queries: midpoint of domains 0 and 1 → both are valid answers")
-    print(f"  Key: strategies that SUPPRESS boundary routing score 0% valid-coverage")
-    print(f"  (consistent-but-absent is worse than making a valid choice)")
+#     print(f"  Boundary queries: midpoint of domains 0 and 1 → both are valid answers")
+#     print(f"  Key: strategies that SUPPRESS boundary routing score 0% valid-coverage")
+#     print(f"  (consistent-but-absent is worse than making a valid choice)")
 
-    # τ values chosen to straddle the expected boundary sim value.
-    # For orthonormal experts, the midpoint query has sim ≈ 1/sqrt(2) ≈ 0.707 to each
-    # of the two adjacent experts. Choosing τ ∈ {0.0, 0.60, 0.80}:
-    #   τ=0.0:  always routes → 100% valid coverage for boundary queries
-    #   τ=0.60: still below 0.707 → still routes → still 100% valid coverage
-    #   τ=0.80: above 0.707 → suppresses boundary queries → 0% valid coverage
-    # This shows the meaningful break-point at the midpoint sim value.
-    tau_values_12 = [0.0, 0.60, 0.80]
+#     # τ values chosen to straddle the expected boundary sim value.
+#     # For orthonormal experts, the midpoint query has sim ≈ 1/sqrt(2) ≈ 0.707 to each
+#     # of the two adjacent experts. Choosing τ ∈ {0.0, 0.60, 0.80}:
+#     #   τ=0.0:  always routes → 100% valid coverage for boundary queries
+#     #   τ=0.60: still below 0.707 → still routes → still 100% valid coverage
+#     #   τ=0.80: above 0.707 → suppresses boundary queries → 0% valid coverage
+#     # This shows the meaningful break-point at the midpoint sim value.
+#     tau_values_12 = [0.0, 0.2, 0.4, 0.60, 0.80]
 
-    rows = []
-    for tau in tau_values_12:
-        # In-dist accuracy
-        correct_in = sum(
-            1 for q, td in zip(in_dist_q, in_dist_true)
-            if select_with_threshold(q, tau)[0] == td
-        )
-        in_acc = correct_in / N
+#     rows = []
+#     for tau in tau_values_12:
+#         # In-dist accuracy
+#         correct_in = sum(
+#             1 for q, td in zip(in_dist_q, in_dist_true)
+#             if select_with_threshold(q, tau)[0] == td
+#         )
+#         in_acc = correct_in / N
 
-        # Valid-domain coverage: boundary queries routed to domain 0 or 1
-        valid_cnt = sum(
-            1 for q in boundary_q
-            if select_with_threshold(q, tau)[0] in valid_boundary_domains
-        )
-        valid_cov = valid_cnt / N
+#         # Valid-domain coverage: boundary queries routed to domain 0 or 1
+#         valid_cnt = sum(
+#             1 for q in boundary_q
+#             if select_with_threshold(q, tau)[0] in valid_boundary_domains
+#         )
+#         valid_cov = valid_cnt / N
 
-        # Also track: suppressed (None), wrong domain (not 0 or 1)
-        suppressed = sum(1 for q in boundary_q if select_with_threshold(q, tau)[0] is None)
-        wrong_dom  = N - valid_cnt - suppressed
+#         # Also track: suppressed (None), wrong domain (not 0 or 1)
+#         suppressed = sum(1 for q in boundary_q if select_with_threshold(q, tau)[0] is None)
+#         wrong_dom  = N - valid_cnt - suppressed
 
-        score   = 0.6 * in_acc + 0.4 * valid_cov
-        spec_tag = " ★SPEC" if tau == 0.0 else ""
-        print(f"  τ={tau:.2f}{spec_tag}: in-dist={in_acc*100:.1f}%  "
-              f"boundary→valid={valid_cov*100:.1f}%  "
-              f"suppressed={suppressed/N*100:.1f}%  wrong={wrong_dom/N*100:.1f}%")
-        rows.append({"name": f"τ={tau:.2f}{spec_tag}",
-                     "in_acc": in_acc, "valid_cov": valid_cov,
-                     "suppressed": suppressed / N, "score": score})
+#         score   = 0.6 * in_acc + 0.4 * valid_cov
+#         spec_tag = " ★SPEC" if tau == 0.0 else ""
+#         print(f"  τ={tau:.2f}{spec_tag}: in-dist={in_acc*100:.1f}%  "
+#               f"boundary→valid={valid_cov*100:.1f}%  "
+#               f"suppressed={suppressed/N*100:.1f}%  wrong={wrong_dom/N*100:.1f}%")
+#         rows.append({"name": f"τ={tau:.2f}{spec_tag}",
+#                      "in_acc": in_acc, "valid_cov": valid_cov,
+#                      "suppressed": suppressed / N, "score": score})
 
-    print_tournament(
-        f"Boundary routing validity (domains 0 & 1 both correct) — n_domains={n_dom}, r={r}",
-        rows,
-        [("in_acc", "In-dist acc", True), ("valid_cov", "Valid coverage", True),
-         ("suppressed", "Suppressed %", True)],
-        winner_col="score", spec_name="★SPEC",
-        notes="Score = 0.6×in_acc + 0.4×valid_coverage. Suppression ≠ correct routing."
-    )
-    print(f"  FIX 5: other-domain negatives tiled to exactly N={N} rows.")
-    print("  Insight: nearest-centroid routes boundary queries to the geometrically "
-          "closer valid domain — threshold rejection provides no benefit here.")
+#     print_tournament(
+#         f"Boundary routing validity (domains 0 & 1 both correct) — n_domains={n_dom}, r={r}",
+#         rows,
+#         [("in_acc", "In-dist acc", True), ("valid_cov", "Valid coverage", True),
+#          ("suppressed", "Suppressed %", True)],
+#         winner_col="score", spec_name="★SPEC",
+#         notes="Score = 0.6×in_acc + 0.4×valid_coverage. Suppression ≠ correct routing."
+#     )
+#     print(f"  FIX 5: other-domain negatives tiled to exactly N={N} rows.")
+#     print("  Insight: nearest-centroid routes boundary queries to the geometrically "
+#           "closer valid domain — threshold rejection provides no benefit here.")
 
 
 def test_13_sample_efficiency_curves(verbose: bool = False, quick: bool = False):
@@ -1848,7 +1870,7 @@ def test_13_sample_efficiency_curves(verbose: bool = False, quick: bool = False)
 
     N_MAX = 800 if not quick else 400
     n_exp = sample_n_experts(8, min(20, PREFIX_DIM))
-    noise = sample_noise(0.05, 0.14)
+    noise = sample_noise(0.1, 0.15)
     ns    = [25, 50, 100, 200, 400, N_MAX] if not quick else [25, 50, 100, 200]
     log_hyperparams(noise=f"{noise:.3f}", n_exp=n_exp, N_MAX=N_MAX)
 

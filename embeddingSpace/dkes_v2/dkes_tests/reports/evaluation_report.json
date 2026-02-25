@@ -1,0 +1,115 @@
+{
+  "generated_at": "2026-02-25T19:21:02.971420",
+  "dkes_version": "2.0",
+  "total_pass": 7,
+  "total_fail": 0,
+  "total_warn": 0,
+  "benchmarks": [
+    {
+      "name": "Backbone Baseline Retrieval",
+      "status": "PASS",
+      "metrics": {
+        "mrr": 0.9933,
+        "map@1000": 0.9095,
+        "ndcg@1": 0.96,
+        "recall@1": 0.495,
+        "precision@1": 0.99,
+        "ndcg@5": 0.9469,
+        "recall@5": 0.935,
+        "precision@5": 0.374,
+        "ndcg@10": 0.9522,
+        "recall@10": 0.955,
+        "precision@10": 0.191
+      },
+      "notes": [
+        "n_queries=100, dim=128, n_domains=4"
+      ],
+      "elapsed_s": 0.07
+    },
+    {
+      "name": "Composite vs Backbone (Ablation)",
+      "status": "PASS",
+      "metrics": {
+        "backbone_ndcg@10": 0.9568,
+        "composite_ndcg@10": 0.9929,
+        "ndcg_gain": 0.0361,
+        "backbone_mrr": 0.995,
+        "composite_mrr": 1.0
+      },
+      "notes": [
+        "\u03b3=0.3, KDM preloaded with 100 concepts"
+      ],
+      "elapsed_s": 0.17
+    },
+    {
+      "name": "Routing Precision & Recall",
+      "status": "PASS",
+      "metrics": {
+        "precision@1": 1.0,
+        "recall@3": 1.0
+      },
+      "notes": [
+        "6 domains \u00d7 6 clusters \u00d7 10 queries"
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "name": "STS Embedding Quality (Spearman)",
+      "status": "PASS",
+      "metrics": {
+        "backbone_spearman": 1.0,
+        "composite_spearman": 0.9988,
+        "delta": -0.0012
+      },
+      "notes": [],
+      "elapsed_s": 0.15
+    },
+    {
+      "name": "Continual Learning \u2014 Forgetting Error",
+      "status": "PASS",
+      "metrics": {
+        "max_forgetting": 0.0,
+        "mean_forgetting": 0.0,
+        "recall_after_inject_task0": 1.0,
+        "recall_after_inject_task1": 1.0,
+        "recall_after_inject_task2": 1.0,
+        "recall_after_inject_task3": 1.0,
+        "recall_after_inject_task4": 1.0,
+        "recall_after_all_task0": 1.0,
+        "recall_after_all_task1": 1.0,
+        "recall_after_all_task2": 1.0,
+        "recall_after_all_task3": 1.0,
+        "recall_after_all_task4": 1.0
+      },
+      "notes": [
+        "5 domains, sequential injection, capacity=500"
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "name": "Memory Utilization vs Quality",
+      "status": "PASS",
+      "metrics": {
+        "ndcg@10_at_20pct": 0.9619,
+        "ndcg@10_at_50pct": 0.9751,
+        "ndcg@10_at_80pct": 0.9839,
+        "ndcg@10_at_100pct": 0.9913
+      },
+      "notes": [
+        "Tests quality at 20/50/80/100% KDM fill"
+      ],
+      "elapsed_s": 0.1
+    },
+    {
+      "name": "KDM Read Latency (768d, 4096 slots)",
+      "status": "PASS",
+      "metrics": {
+        "ms_per_query": 9.506
+      },
+      "notes": [
+        "Measured on CPU with numpy; GPU will be much faster"
+      ],
+      "elapsed_s": 1.92
+    }
+  ]
+}
