@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: demoe
+Version: 1.0.0
+Summary: DEMoE: Distributed Experts Mixture of Experts
+Author: Research Team
+Requires-Python: >=3.8
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: scipy>=1.7.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=3.0; extra == "dev"
+Dynamic: requires-python
